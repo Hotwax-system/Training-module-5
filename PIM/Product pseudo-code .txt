@@ -85,8 +85,4 @@ Else :
 		Return "No valid record found"
 		Else : 
                               Product.thru_date = Current_Timestamp
-Part 3: Data Integration with Shopify (Mapping and Pseudo-code)
-This section outlines how Shopify's Product data structure maps to the Moqui Universal Data Model (UDM), followed by pseudo-code for transforming and ingesting that data into the OMS system.
-We can use Jolt for Transformation of these data
-Shopify to OMS Field Mapping
-Shopify JSON FieldTableColumnidproductexternalId (optional)titleproductproduct_namebody_htmlproductdescriptioncreated_atproductfrom_dateproduct_typeproduct_typedescriptionvendorproductbrand_namestatusproductstatusId (custom field)options.nameproduct_feature_typeproduct_feature_type_idoptions.values[]product_featuredescriptionvariants.option1product_feature_applFK to featurevariants.skugood_identificationskuvariants.priceproduct_priceprice_amountvariants.inventory_quantity(Optional Inventory System)Can be mapped separatelyimages[].srcCustom table (product_image)image_urlweight, grams, weight_unitproduct_feature (optional)Feature Type: WEIGHT
+
