@@ -1,0 +1,312 @@
+A. Find Customer
+* Use FindCustomerView to search by parameters like partyId, emailAddress, combinedName, etc.
+* Support case-insensitive LIKE search for flexible matching.
+* Build dynamic condition list using Moqui’s EntityCondition factory.
+* Output filtered partyId list.
+After defining all the entities related to the party
+Then we create a view of all these entity FindCustomerView in entity folder
+After defining the entities and view entity 
+Then we define the service for our main logic
+
+
+First of all we take the reference of the execution context 
+FUNCTION findCustomer(email, partyId)
+    IF email IS NOT NULL THEN
+        contactRecord = SELECT * FROM contact_mech WHERE info_string = email AND contact_mech_type_id = 'EMAIL_ADDRESS'
+        IF contactRecord EXISTS THEN
+            partyContact = SELECT party_id FROM party_contact_mech WHERE contact_mech_id = contactRecord.contact_mech_id
+            IF partyContact EXISTS THEN
+                RETURN partyContact.party_id
+            ELSE
+                RETURN "Customer not found"
+            END IF
+        ELSE
+            RETURN "Customer not found"
+        END IF
+    ELSE IF partyId IS NOT NULL THEN
+        partyRecord = SELECT * FROM party WHERE party_id = partyId
+        IF partyRecord EXISTS THEN
+            RETURN partyRecord
+        ELSE
+            RETURN "Customer not found"
+        END IF
+    ELSE
+        RETURN "Invalid input: Both email and partyId are NULL"
+    END IF
+END FUNCTION
+B. Create Customer
+* Check if customer exists using find#Customer service.
+* If not found:
+   * Create Party (with partyTypeEnumId = PERSON)
+   * Create Person with customer details
+   * Create PartyRole with roleTypeEnumId = CUSTOMER
+   * Create ContactMech for email
+   * Link to PartyContactMech (purpose: EmailPrimary)
+
+
+C. Update Customer
+* Find customer by emailAddress
+* Update:
+   * Phone: Soft delete old contact by setting thruDate. Then create new ContactMech, TelecomNumber, and PartyContactMech.
+   * Postal Address: Same flow as above using PostalPrimary.
+First of all we take the reference of context
+
+
+FUNCTION createCustomer(firstName, lastName, email)
+    -- Step 1: Check if email already exists
+    existingContact = SELECT * FROM contact_mech WHERE info_string = email AND contact_mech_type_id = 'EMAIL_ADDRESS'
+    IF existingContact EXISTS THEN
+        RETURN "Customer already exists"
+    ELSE
+        -- Step 2: Generate new party ID
+        partyId = generateNewId()
+        -- Step 3: Insert into party table
+        INSERT INTO party (party_id, party_type_id, status_id, created_date) VALUES (partyId, 'PERSON', 'ACTIVE', CURRENT_TIMESTAMP)
+        -- Step 4: Insert into person table
+        INSERT INTO person (party_id, first_name, last_name) VALUES (partyId, firstName, lastName)
+        -- Step 5: Assign role as CUSTOMER
+        INSERT INTO party_role (party_id, role_type_id) VALUES (partyId, 'CUSTOMER')
+        -- Step 6: Generate new contact_mech ID
+        contactMechId = generateNewId()
+        -- Step 7: Create contact_mech for email
+        INSERT INTO contact_mech (contact_mech_id, contact_mech_type_id, info_string) VALUES (contactMechId, 'EMAIL_ADDRESS', email)
+        -- Step 8: Link party and contact_mech
+        INSERT INTO party_contact_mech (party_id, contact_mech_id, from_date) VALUES (partyId, contactMechId, CURRENT_TIMESTAMP)
+        -- Step 9: Assign purpose for contact_mech
+        INSERT INTO party_contact_mech_purpose (party_id, contact_mech_id, contact_mech_purpose_type_id, from_date) VALUES (partyId, contactMechId, 'EmailPrimary', CURRENT_TIMESTAMP)
+        RETURN "Customer created successfully"
+    END IF
+END FUNCTION
+
+
+FUNCTION updateCustomer(email, contactNumber, countryCode, areaCode,
+                        address1, city, postalCode)
+
+
+    -- Step 1: Get party_id using email
+    partyRecord = SELECT party_id FROM contact_mech  JOIN party_contact_mech USING (contact_mech_id) WHERE info_string = email AND contact_mech_type_id = 'EMAIL_ADDRESS'
+
+
+    IF partyRecord NOT FOUND THEN
+        RETURN "Customer not found"
+    END IF
+
+
+    partyId = partyRecord.party_id
+
+
+    -- Step 2: Update phone number (if provided)
+    IF contactNumber IS NOT NULL THEN
+        -- Soft delete old phone contact mechanisms
+        UPDATE party_contact_mech SET thru_date = CURRENT_TIMESTAMP WHERE party_id = partyId 
+AND contact_mech_id IN (
+              SELECT contact_mech_id FROM contact_mech
+              WHERE contact_mech_type_id = 'TELECOM_NUMBER'
+          )
+          AND thru_date IS NULL
+
+
+        -- Insert new contact_mech for phone
+        contactMechId = generateNewId()
+
+
+        INSERT INTO contact_mech (contact_mech_id, contact_mech_type_id) VALUES (contactMechId, 'TELECOM_NUMBER')
+
+
+        INSERT INTO telecom_number (contact_mech_id, country_code, area_code, contact_number) VALUES (contactMechId, countryCode, areaCode, contactNumber)
+
+
+        INSERT INTO party_contact_mech (party_id, contact_mech_id, from_date) VALUES (partyId, contactMechId, CURRENT_TIMESTAMP)
+
+
+        INSERT INTO party_contact_mech_purpose (party_id, contact_mech_id, contact_mech_purpose_type_id, from_date) VALUES (partyId, contactMechId, 'PhonePrimary', CURRENT_TIMESTAMP)
+    END IF
+
+
+    -- Step 3: Update postal address (if provided)
+    IF address1 IS NOT NULL THEN
+        -- Soft delete old address contact mechanisms
+        UPDATE party_contact_mech
+        SET thru_date = CURRENT_TIMESTAMP
+        WHERE party_id = partyId
+          AND contact_mech_id IN (
+              SELECT contact_mech_id FROM contact_mech
+              WHERE contact_mech_type_id = 'POSTAL_ADDRESS'
+          )
+          AND thru_date IS NULL
+
+
+        -- Insert new contact_mech for address
+        contactMechId = generateNewId()
+
+
+        INSERT INTO contact_mech (contact_mech_id, contact_mech_type_id)
+        VALUES (contactMechId, 'POSTAL_ADDRESS')
+
+
+        INSERT INTO postal_address (contact_mech_id, address1, city, postal_code)
+        VALUES (contactMechId, address1, city, postalCode)
+
+
+        INSERT INTO party_contact_mech (party_id, contact_mech_id, from_date)
+        VALUES (partyId, contactMechId, CURRENT_TIMESTAMP)
+
+
+        INSERT INTO party_contact_mech_purpose (party_id, contact_mech_id, contact_mech_purpose_type_id, from_date)
+        VALUES (partyId, contactMechId, 'PostalPrimary', CURRENT_TIMESTAMP)
+    END IF
+
+
+    RETURN "Customer updated"
+
+
+END FUNCTION
+D. Delete (Soft Delete)
+* For Party: Set status to Disabled
+* For ContactMech: Set thruDate to current timestamp
+If user provide partyId then 
+First of all we take the reference of context
+FUNCTION deleteCustomer(partyId, contactMechId)
+    IF partyId IS NOT NULL THEN
+        -- Soft delete the party by updating its status
+        UPDATE party  SET status_id = 'DISABLED' WHERE party_id = partyId
+        RETURN "Customer disabled"
+    END IF
+
+
+    IF contactMechId IS NOT NULL THEN
+        -- Soft delete the contact mechanism by setting the thru_date
+        UPDATE party_contact_mech SET thru_date = CURRENT_TIMESTAMP WHERE contact_mech_id = contactMechId AND thru_date IS NULL
+        RETURN "ContactMech soft deleted"
+    END IF
+    RETURN "No valid input provided"
+END FUNCTION
+Part 3: Data Integration with Shopify (Mapping and Pseudo-code)
+This section outlines how Shopify's customer data structure maps to the Moqui Universal Data Model (UDM), followed by pseudo-code for transforming and ingesting that data into the OMS system.
+We can use Jolt for Transformation of these data
+Shopify to OMS Field Mapping
+
+
+Shopify Field
+	Table
+	Column
+	addresses[].id
+	PostalAddress
+	contactMechId (unique ID for address)
+	addresses[].customer_id
+	Party
+	partyId (foreign key to Party)
+	addresses[].first_name
+	PostalAddress
+	toName (combine with last_name if needed)
+	addresses[].last_name
+	PostalAddress
+	toName
+	addresses[].address1
+	PostalAddress
+	address1
+	addresses[].address2
+	PostalAddress
+	address2
+	addresses[].city
+	PostalAddress
+	city
+	addresses[].province
+	PostalAddress
+	stateProvinceGeoId or custom field province
+	addresses[].country
+	PostalAddress
+	countryGeoId or custom field country
+	addresses[].zip
+	PostalAddress
+	postalCode
+	addresses[].phone
+	TelecomNumber
+	contactNumber
+	addresses[].province_code
+	PostalAddress
+	provinceCode
+	addresses[].country_code
+	PostalAddress
+	countryCode
+	addresses[].country_name
+	PostalAddress
+	countryName
+	created_at
+	Party
+	createdDate
+	email
+	ContactMech
+	infoString with type EmailPrimary
+	first_name
+	Person
+	firstName
+	last_name
+	Person
+	lastName
+	id
+	Party
+	externalId (mapped from Shopify customer ID)
+	last_order_id
+	OrderHeader
+	externalId
+	last_order_name
+	OrderHeader
+	orderName
+	orders_count
+	OrderItem
+	quantity (number of order items or inferred metric)
+	phone
+	TelecomNumber
+	contactNumber with type PhonePrimary
+	state
+	Party
+	statusId (e.g., "ENABLED" or "DISABLED")
+	
+
+Pseudo code for shopify integration
+
+
+Retrieves a list of customers:
+First we get data from shopify using following api
+/admin/api/2025-07/customers.json?ids=<ids>
+
+
+Function ImportShopifyCustomer(shopifyCustomer):
+1. Check for Existing Customer
+* Use the email or external ID from Shopify to check if the customer already exists in the Moqui system.
+* If found, skip creation (or optionally, update the customer).
+    # Step 1: Check if customer already exists using email or externalId
+    result = ec.service.sync().name("PartyServices.find#Customer").parameters(["emailAddress": shopifyCustomer.email]).call()
+
+
+    If result.customerList is empty:
+2. Create Party
+* Create a new record in the Party entity with:
+   * partyTypeEnumId set to PERSON
+   * externalId set to Shopify customer ID
+   * statusId mapped from the Shopify state field
+   * createdDate set from the created_at field in Shopify
+3. Create Person
+* Create a new Person record linked to the Party using:
+   * firstName from Shopify first_name
+   * lastName from Shopify last_name
+4. Assign Party Role
+* Create a PartyRole record linking the Party to the role type CUSTOMER
+5. Add Email Contact Mechanism
+* Create a ContactMech with:
+   * infoString set to Shopify email
+   * contactMechTypeEnumId set to EMAIL_ADDRESS
+* Link it to the Party using PartyContactMech with purpose EmailPrimary
+6. Add Phone Contact Mechanism (Optional)
+* If Shopify phone is present:
+   * Create a ContactMech of type TELECOM_NUMBER
+   * Create a TelecomNumber with contactNumber from Shopify
+   * Link it using PartyContactMech with purpose PhonePrimary
+7. Add Postal Address
+* Use default_address or first entry from addresses array
+* Create a ContactMech of type POSTAL_ADDRESS
+* Create a PostalAddress record using:
+   * toName: Shopify first_name + last_name
+   * address1, address2, city, province, postalCode, country, provinceCode, countryCode, countryName
+* Link it to Party using PartyContactMech with purpose PostalPrimary
